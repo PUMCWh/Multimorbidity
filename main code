@@ -1,0 +1,77 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sat May 31 23:43:08 2025
+
+@author: HP
+"""
+
+import os
+import time
+import pandas as pd
+from http import HTTPStatus
+from dashscope import Application
+from tqdm import tqdm
+
+# Input and output file paths
+INPUT_FILE = r"C:\Users\HP\Desktop\EHR_df_judgment.xlsx"
+INPUT_SHEET = "无法匹配"
+OUTPUT_FILE = r"C:\Users\HP\Desktop\EHR_df_judgment_llm.xlsx"
+OUTPUT_SHEET = "验证结果"
+
+# Read the input Excel file
+df = pd.read_excel(INPUT_FILE, sheet_name=INPUT_SHEET)
+
+# Ensure required columns are present
+required_columns = ['疾病名称', '疾病编码']
+for col in required_columns:
+    if col not in df.columns:
+        raise ValueError(f"Missing required column in input file: {col}")
+
+# Define API call function
+def call_api(disease_name, current_code):
+    prompt = f'"{disease_name}" 的疾病ICD-10编码是"{current_code}"，请帮我判断是否正确（如果正确，则直接回复“正确”），如果不正确，请给我最合适的完整的ICD-10编码（请以“不正确，建议编码：”开头），不必说明理由。'
+
+    try:
+        response = Application.call(
+            api_key="sk-xxxxxxx",  # Recommended to store in environment variables
+            app_id='xxxxx',
+            prompt=prompt
+        )
+    except Exception as e:
+        return f"API call failed: {e}"
+
+    if response.status_code != HTTPStatus.OK:
+        error_message = (
+            f'request_id={response.request_id}\n'
+            f'code={response.status_code}\n'
+            f'message={response.message}\n'
+            'Refer to documentation: https://help.aliyun.com/zh/model-studio/developer-reference/error-code'
+        )
+        return error_message
+    else:
+        return response.output.text.strip()
+
+# Add a new column to store verification results
+df['验证结果'] = ''
+
+# Iterate over each row and call the API
+for index, row in tqdm(df.iterrows(), total=df.shape[0], desc="Processing rows"):
+    disease_name = row['疾病名称']
+    current_code = str(row['疾病编码']).strip()
+
+    print(f"Processing row {index + 1}: Disease Name = {disease_name}, Current Code = {current_code}")
+
+    # Call the API to get verification result
+    result = call_api(disease_name, current_code)
+
+    # Store result in the new column
+    df.at[index, '验证结果'] = result
+
+    # Add delay to avoid excessive API calls
+    time.sleep(0.001)  # Adjust delay according to API rate limits
+
+# Write results to the output Excel file
+with pd.ExcelWriter(OUTPUT_FILE, engine='openpyxl') as writer:
+    df.to_excel(writer, sheet_name=OUTPUT_SHEET, index=False)
+
+print(f"Verification completed. Results saved to worksheet '{OUTPUT_SHEET}' in {OUTPUT_FILE}")
